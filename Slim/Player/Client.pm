@@ -1289,12 +1289,12 @@ sub playPoint {
 sub nextChunk {
 	my $client = shift;
 
-	my $maxChunkSize = shift;
 	if(!defined($client->chunkLoaderThread)) {
 		$client->loadedChunks(Thread::Queue->new());
 		$client->loadableChunks(Thread::Queue->new());
 	}
-	return Slim::Player::Source::nextChunk($client, $maxChunkSize, @_);
+	#TODO: test if callback is being passed.
+	return Slim::Player::Source::nextChunk($client, @_);
 }
 
 sub closeStream { }
