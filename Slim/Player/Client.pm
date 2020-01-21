@@ -1,8 +1,7 @@
 package Slim::Player::Client;
 
-# $Id$
 
-# Logitech Media Server Copyright 2001-2011 Logitech.
+# Logitech Media Server Copyright 2001-2020 Logitech.
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License,
 # version 2.
@@ -15,6 +14,10 @@ package Slim::Player::Client;
 use strict;
 
 use base qw(Slim::Utils::Accessor);
+
+use threads;
+use threads::shared;
+use Thread::Queue;
 
 use Scalar::Util qw(blessed);
 use Storable qw(nfreeze);
@@ -129,7 +132,7 @@ use constant KNOB_NOACCELERATION => 0x02;
 								_tempVolume browseCache musicInfoTextCache metaTitle languageOverride controlledBy controllerUA password currentSleepTime
 								sleepTime pendingPrefChanges _pluginData
 								alarmData knobData
-								modeStack modeParameterStack playlist chunks
+								modeStack modeParameterStack playlist chunks loadedChunks loadableChunks chunkLoaderThread
 								shufflelist shuffleInhibit syncSelections searchTerm
 								updatePending httpState
 								disconnected
@@ -236,6 +239,10 @@ sub new {
 		bufferSize              => 0,
 		directBody              => undef,
 		chunks                  => [],
+		loadedChunks		=> undef,
+		loadableChunks		=> undef,
+		chunkLoaderRunning	=> 0,
+		chunkLoaderThread	=> undef,
 		bufferStarted           => 0,                  # when we started buffering/rebuffering
 		streamReadableCallback  => undef,
 
@@ -256,7 +263,7 @@ sub new {
 		display                 => undef,
 		lines                   => undef,
 		customVolumeLines       => undef,
-	    customPlaylistLines     => undef,
+		customPlaylistLines     => undef,
 		lines2periodic          => undef,
 		periodicUpdateTime      => 0,
 		blocklines              => undef,
@@ -1280,7 +1287,14 @@ sub playPoint {
 }
 
 sub nextChunk {
-	return Slim::Player::Source::nextChunk(@_);
+	my $client = shift;
+
+	my $maxChunkSize = shift;
+	if(!defined($client->chunkLoaderThread)) {
+		$client->loadedChunks(Thread::Queue->new());
+		$client->loadableChunks(Thread::Queue->new());
+	}
+	return Slim::Player::Source::nextChunk($client, $maxChunkSize, @_);
 }
 
 sub closeStream { }

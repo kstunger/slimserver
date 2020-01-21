@@ -1,14 +1,15 @@
 package Slim::Player::Source;
 
-# $Id$
 
-# Logitech Media Server Copyright 2001-2011 Logitech.
+# Logitech Media Server Copyright 2001-2020 Logitech.
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License,
 # version 2.
 
 use bytes;
 use strict;
+use threads;
+use Thread::Queue;
 
 use Fcntl qw(SEEK_CUR);
 use Time::HiRes;
@@ -274,6 +275,60 @@ sub explodeSong {
 	}
 }
 
+#TODO: how to stop?
+sub chunkLoader {
+	my $client = shift; #TODO: can we put the client in the queue so one thread reads many streams?
+	my $chunksize;
+	my $readlen = 1;
+	$log->debug("Starting chunkLoader for $client");
+
+	do {
+		if($readlen == 0) {
+			$log->debug("Chunk loader finished.");
+			return;
+		}
+		while ($client->loadableChunks->pending() == 0) {
+			Time::HiRes::sleep(.25);
+		}
+		#$readlen = 1;
+
+		$chunksize = $client->loadableChunks->peek();
+		$log->debug("$client asking for $chunksize sized chunks");
+
+		my $requests = $client->loadableChunks->pending();
+		my $responses = $client->loadedChunks->pending();
+		$log->debug("Client has $requests chunk requests");
+		$log->debug("Client has $responses chunk responses");
+
+		my $fd = $client->controller()->songStreamController() ? $client->controller()->songStreamController()->streamHandler() : undef;
+		if($fd) {
+			while (defined($readlen) && $readlen > 0) {
+				my $chunk;
+				#$log->debug("Performing read");
+				$readlen = $fd->sysread($chunk, $chunksize);
+				my $errorcode = $!;
+				if(defined($readlen)) {
+					$client->loadedChunks->enqueue(1, $errorcode, $readlen, $chunk);
+					$log->debug("Loaded chunk with length $readlen");
+				}
+				else {
+					$log->debug("Nothing read, checking error code: $errorcode");
+					if($errorcode == EINTR || $errorcode == ECHILD || $errorcode == EAGAIN) {
+						$log->debug("Waiting to retry");
+						$readlen = 1;
+						sleep(1);
+					}
+					#TODO: EWOULDBLOCK
+					elsif(defined($errorcode)) {
+						$log->debug("ERRNO not expected.");
+						$client->loadedChunks->enqueue(1, $errorcode, $readlen, $chunk);
+					}
+				}
+			}
+		}
+	} while (defined($client->loadableChunks->dequeue()));
+}
+
 
 sub _readNextChunk {
 	my $client = shift;
@@ -282,7 +337,7 @@ sub _readNextChunk {
 	
 	if (!defined($givenChunkSize)) {
 		$givenChunkSize = $prefs->get('udpChunkSize') * 10;
-	} 
+	}
 
 	my $chunksize = $givenChunkSize;
 
@@ -302,56 +357,74 @@ sub _readNextChunk {
 				$silence = $asilence;
 			}
 		}
-		
+
 		0 && $log->debug("We need to send $silence seconds of silence...");
-		
+
 		while ($silence > 0) {
 			$chunk .=  ${Slim::Web::HTTP::getStaticContent("html/lbrsilence.mp3")};
 			$silence -= (1152 / 44100);
 		}
-		
+
 		my $len = length($chunk);
-		
+
 		main::DEBUGLOG && $log->debug("Sending $len bytes of silence.");
-		
+
 		$client->streamBytes($len);
-		
+
 		return \$chunk if ($len);
 	}
 
 	my $fd = $client->controller()->songStreamController() ? $client->controller()->songStreamController()->streamHandler() : undef;
-	
+
 	if ($fd) {
-
 		if ($chunksize > 0) {
+			my $errorcode = EINTR;
+			my $readlen;
+			my $status;
 
-			my $readlen = $fd->sysread($chunk, $chunksize);
+			$log->debug("Checking loaded chunks queue.");
+			$status = $client->loadedChunks->peek();
+			if(!defined($status)) {
+				$log->debug("Adding to chunks request queue.");
+				$client->loadableChunks->enqueue($chunksize);
+				if(!defined($client->chunkLoaderThread) || !$client->chunkLoaderThread->is_running()) {
+					$log->debug("Starting chunkLoader thread.");
+					$client->chunkLoaderThread(threads->create({'void' => 1}, "Slim::Player::Source::chunkLoader", $client));
+					$client->chunkLoaderThread->detach();
+				}
+			}
 
-			if (!defined($readlen)) { 
-				if ($! == EWOULDBLOCK) {
+			($status, $errorcode, $readlen, $chunk) = $client->loadedChunks->dequeue(4);
+			$log->debug("Got data from chunks queue.");
+
+			if (!defined($readlen)) {
+				if ($errorcode == EWOULDBLOCK) {
 					# $log->debug("Would have blocked, will try again later.");
 					if ($callback) {
 						# This is a hack but I hesitate to use isa(Pileline) or similar.
 						# Suggestions for better, efficient implementation welcome
 						Slim::Networking::Select::addRead(${*$fd}{'pipeline_reader'} || $fd, sub {_wakeupOnReadable(shift, $client);}, 1);
 					}
-					return undef;	
-				} elsif ($! == EINTR) {
+					return undef;
+				} elsif ($errorcode == EINTR) {
 					main::DEBUGLOG && $log->debug("Got EINTR, will try again later.");
 					return undef;
-				} elsif ($! == ECHILD) {
+				} elsif ($errorcode == ECHILD) {
 					main::DEBUGLOG && $log->debug("Got ECHILD - will try again later.");
 					return undef;
+				} elsif ($errorcode == EAGAIN) {
+					main::DEBUGLOG && $log->debug("Got EAGAIN - will try again later.");
+					return undef;
 				} else {
-					main::DEBUGLOG && $log->debug("readlen undef: ($!) " . ($! + 0));
-					$endofsong = 1; 
-				}	
-			} elsif ($readlen == 0) { 
-				main::DEBUGLOG && $log->debug("Read to end of file or pipe");  
+					main::DEBUGLOG && $log->debug("readlen undef: ($errorcode) " . ($errorcode + 0));
+					$endofsong = 1;
+				}
+			} elsif ($readlen == 0) {
+				main::DEBUGLOG && $log->debug("Read to end of file or pipe");
 				$endofsong = 1;
 			} else {
 				# too verbose
-				# $log->debug("Read $readlen bytes from source");
+			#	 $log->debug("Read $readlen bytes from source");
 			}
 		}
 
@@ -390,6 +463,7 @@ bail:
 		
 		$client->controller()->localEndOfStream();
 		
+		$log->debug("Returning undef to signal end of song.");
 		return undef;
 	}
 

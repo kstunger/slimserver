@@ -1,8 +1,7 @@
 package Slim::Utils::Errno;
 
-# $Id$
 
-# Logitech Media Server Copyright 2001-2011 Logitech.
+# Logitech Media Server Copyright 2001-2020 Logitech.
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License, 
 # version 2.
@@ -21,6 +20,8 @@ Platform correct error constants.
 
 =item * EWOULDBLOCK
 
+=item * EAGAIN
+
 =item * EINPROGRESS
 
 =item * EINTR
@@ -36,7 +37,7 @@ Platform correct error constants.
 use strict;
 use Exporter::Lite;
 
-our @EXPORT = qw(EWOULDBLOCK EINPROGRESS EINTR ECHILD EBADF);
+our @EXPORT = qw(EWOULDBLOCK EAGAIN EINPROGRESS EINTR ECHILD EBADF);
 
 BEGIN {
         if (main::ISWINDOWS) {
@@ -44,10 +45,11 @@ BEGIN {
                 *EBADF       = sub () { 10009 };
                 *ECHILD      = sub () { 10010 };
                 *EWOULDBLOCK = sub () { 10035 };
+                *EAGAIN	     = sub () { 10035 }; #Treat the same as EWOULDBLOCK?
                 *EINPROGRESS = sub () { 10036 };
         } else {
                 require Errno;
-                import Errno qw(EWOULDBLOCK EINPROGRESS EINTR ECHILD EBADF);
+                import Errno qw(EWOULDBLOCK EAGAIN EINPROGRESS EINTR ECHILD EBADF);
         }
 }
 

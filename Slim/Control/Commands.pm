@@ -1,8 +1,6 @@
 package Slim::Control::Commands;
 
-# $Id: Commands.pm 5121 2005-11-09 17:07:36Z dsully $
-#
-# Logitech Media Server Copyright 2001-2011 Logitech.
+# Logitech Media Server Copyright 2001-2020 Logitech.
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License,
 # version 2.
@@ -3259,7 +3257,6 @@ sub _playlistXtracksCommand_parseSearchTerms {
 	my $client = shift;
 	my $what   = shift;
 	my $cmd    = shift;
-	my $sortParam = shift;
 
 	# if there isn't an = sign, then change the first : to a =
 	if ($what !~ /=/) {
@@ -3408,11 +3405,12 @@ sub _playlistXtracksCommand_parseSearchTerms {
 		my $value = $terms->{'sort'};
 
 		if ($value eq 'artflow' || $value eq 'yearartistalbum' || $value eq 'yearalbum') {
-			# If its an album sort where year takes precendence, then sort by year first
-			$sort = $albumYearSort;
-		} elsif ($value ne 'artistalbum' && $value ne 'new' && $value ne 'random') {
+			# If its an album sort where year takes precedence, then sort by year first
+			if ($sort eq $albumSort) {
+				$sort = $albumYearSort;
+			}
+		} elsif ($value !~ /^(artistalbum|albumtrack|new|random)$/) {
 			# Only use sort value if it is **not** an album sort.
-			# TODO: Better way to check this?
 			$sort = $value;
 		}
 	}
