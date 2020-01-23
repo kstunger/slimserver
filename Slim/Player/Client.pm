@@ -241,7 +241,6 @@ sub new {
 		chunks                  => [],
 		loadedChunks		=> undef,
 		loadableChunks		=> undef,
-		chunkLoaderRunning	=> 0,
 		chunkLoaderThread	=> undef,
 		bufferStarted           => 0,                  # when we started buffering/rebuffering
 		streamReadableCallback  => undef,
