@@ -275,12 +275,12 @@ sub explodeSong {
 	}
 }
 
-#TODO: how to stop?
-sub chunkLoader {
+
+sub _chunkLoader {
 	my $client = shift; #TODO: can we put the client in the queue so one thread reads many streams?
 	my $chunksize;
 	my $readlen = 1;
-	$log->debug("Starting chunkLoader for $client");
+	$log->debug("Starting _chunkLoader for $client");
 
 	do {
 		if($readlen == 0) {
@@ -303,8 +303,7 @@ sub chunkLoader {
 		my $fd = $client->controller()->songStreamController() ? $client->controller()->songStreamController()->streamHandler() : undef;
 		if($fd) {
 			while (defined($readlen) && $readlen > 0) {
-				my $chunk;
-				#$log->debug("Performing read");
+				my $chunk = '';
 				$readlen = $fd->sysread($chunk, $chunksize);
 				my $errorcode = $!;
 				if(defined($readlen)) {
@@ -313,14 +312,17 @@ sub chunkLoader {
 				}
 				else {
 					$log->debug("Nothing read, checking error code: $errorcode");
-					if($errorcode == EINTR || $errorcode == ECHILD || $errorcode == EAGAIN) {
+					if($errorcode == EINTR || $errorcode == ECHILD) {
 						$log->debug("Waiting to retry");
 						$readlen = 1;
 						sleep(1);
 					}
-					#TODO: EWOULDBLOCK
-					elsif(defined($errorcode)) {
-						$log->debug("ERRNO not expected.");
+					elsif($errorcode == EWOULDBLOCK) {
+						$client->loadedChunks->enqueue(1, $errorcode, $readlen, $chunk);
+						$readlen = 1;
+						sleep(1);
+					}
+					else {
 						$client->loadedChunks->enqueue(1, $errorcode, $readlen, $chunk);
 					}
 				}
@@ -388,8 +390,8 @@ sub _readNextChunk {
 				$log->debug("Adding to chunks request queue.");
 				$client->loadableChunks->enqueue($chunksize);
 				if(!defined($client->chunkLoaderThread) || !$client->chunkLoaderThread->is_running()) {
-					$log->debug("Starting chunkLoader thread.");
-					$client->chunkLoaderThread(threads->create({'void' => 1}, "Slim::Player::Source::chunkLoader", $client));
+					$log->debug("Starting _chunkLoader thread.");
+					$client->chunkLoaderThread(threads->create({'void' => 1}, "Slim::Player::Source::_chunkLoader", $client));
 					$client->chunkLoaderThread->detach();
 				}
 			}
@@ -411,9 +413,6 @@ sub _readNextChunk {
 					return undef;
 				} elsif ($errorcode == ECHILD) {
 					main::DEBUGLOG && $log->debug("Got ECHILD - will try again later.");
-					return undef;
-				} elsif ($errorcode == EAGAIN) {
-					main::DEBUGLOG && $log->debug("Got EAGAIN - will try again later.");
 					return undef;
 				} else {
 					main::DEBUGLOG && $log->debug("readlen undef: ($errorcode) " . ($errorcode + 0));
@@ -462,8 +461,7 @@ bail:
 		}
 		
 		$client->controller()->localEndOfStream();
-		
-		$log->debug("Returning undef to signal end of song.");
+
 		return undef;
 	}
 
