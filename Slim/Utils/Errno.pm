@@ -20,8 +20,6 @@ Platform correct error constants.
 
 =item * EWOULDBLOCK
 
-=item * EAGAIN
-
 =item * EINPROGRESS
 
 =item * EINTR
@@ -37,7 +35,7 @@ Platform correct error constants.
 use strict;
 use Exporter::Lite;
 
-our @EXPORT = qw(EWOULDBLOCK EAGAIN EINPROGRESS EINTR ECHILD EBADF);
+our @EXPORT = qw(EWOULDBLOCK EINPROGRESS EINTR ECHILD EBADF);
 
 BEGIN {
         if (main::ISWINDOWS) {
@@ -45,7 +43,6 @@ BEGIN {
                 *EBADF       = sub () { 10009 };
                 *ECHILD      = sub () { 10010 };
                 *EWOULDBLOCK = sub () { 10035 };
-                *EAGAIN	     = sub () { 10035 }; #Treat the same as EWOULDBLOCK?
                 *EINPROGRESS = sub () { 10036 };
         } else {
                 require Errno;
