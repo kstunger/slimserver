@@ -16,7 +16,6 @@ use strict;
 use base qw(Slim::Utils::Accessor);
 
 use threads;
-use threads::shared;
 use Thread::Queue;
 
 use Scalar::Util qw(blessed);
